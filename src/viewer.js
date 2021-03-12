@@ -35,6 +35,10 @@ import { GUI } from 'dat.gui';
 import { environments } from '../assets/environment/index.js';
 import { createBackground } from '../lib/three-vignette.js';
 
+import * as THREE from 'three';
+
+window.THREE= THREE;
+
 const DEFAULT_CAMERA = '[default]';
 
 const IS_IOS = isIOS();
@@ -55,6 +59,59 @@ const MAP_NAMES = [
 const Preset = {ASSET_GENERATOR: 'assetgenerator'};
 
 Cache.enabled = true;
+
+function getVertexGroups(geom) {
+  const names = Object.keys(geom.attributes).filter(attrName => attrName.indexOf('_') === 0);
+  const groups = {};
+  for (const name of names) {
+    groups[name] = geom.getAttribute(name);
+  }
+  return groups;
+}
+
+function hasVertexGroups(geom) {
+  return Object.keys(geom.attributes).some(attrName => attrName.indexOf('_') === 0)
+}
+
+function colorShift(geom, vertexGroupName, hue, saturation = 0, light = 0) {
+  if (!(vertexGroupName in geom.attributes)) {
+    console.log('no vertex group named', vertexGroupName, geom);
+    return;
+  }
+
+  const color = geom.getAttribute("color");
+  const mask = geom.getAttribute(vertexGroupName);
+  
+  let original;
+  if ("originalcolor" in geom.attributes) {
+    original = geom.getAttribute("originalcolor");
+  } else {
+    original = new THREE.BufferAttribute().copy(color);
+    geom.setAttribute("originalcolor", original);
+  }
+
+  const c = new THREE.Color();
+  if (mask.count !== original.count) {
+    throw new Error("mask must be same size");
+  }
+
+  for (let i = 0, len = original.count; i < len; i++) {
+    if (mask.array[i]) {
+      c.r = original.getX(i) / 65535;
+      c.g = original.getY(i) / 65535;
+      c.b = original.getZ(i) / 65535;
+      c.offsetHSL(hue, saturation, light);
+      color.setXYZ(
+        i,
+        Math.floor(c.r * 65535),
+        Math.floor(c.g * 65535),
+        Math.floor(c.b * 65535)
+      );
+    }
+  }
+
+  color.needsUpdate = true;
+}
 
 export class Viewer {
 
@@ -138,6 +195,9 @@ export class Viewer {
     this.animCtrls = [];
     this.morphFolder = null;
     this.morphCtrls = [];
+    this.vgColorsFolder = null;
+    this.vgColorsCtrls = [];
+    this.vgColorsHues = [];
     this.skeletonHelpers = [];
     this.gridHelper = null;
     this.axesHelper = null;
@@ -255,6 +315,8 @@ export class Viewer {
         // DRACOLoader.releaseDecoderModule();
 
         resolve(gltf);
+
+        // debugger;
 
       }, undefined, reject);
 
@@ -612,6 +674,9 @@ export class Viewer {
     this.morphFolder = gui.addFolder('Morph Targets');
     this.morphFolder.domElement.style.display = 'none';
 
+    this.vgColorsFolder = gui.addFolder('Vertex Group Colors');
+    this.vgColorsFolder.domElement.style.display = 'none';
+
     // Camera controls.
     this.cameraFolder = gui.addFolder('Cameras');
     this.cameraFolder.domElement.style.display = 'none';
@@ -643,8 +708,13 @@ export class Viewer {
     this.animCtrls.length = 0;
     this.animFolder.domElement.style.display = 'none';
 
+    this.vgColorsCtrls.forEach((ctrl) => ctrl.remove());
+    this.vgColorsCtrls.length = 0;
+    this.vgColorsFolder.domElement.style.display = 'none';
+
     const cameraNames = [];
     const morphMeshes = [];
+    const vgColors = {};
     this.content.traverse((node) => {
       if (node.isMesh && node.morphTargetInfluences) {
         morphMeshes.push(node);
@@ -652,6 +722,9 @@ export class Viewer {
       if (node.isCamera) {
         node.name = node.name || `VIEWER__camera_${cameraNames.length + 1}`;
         cameraNames.push(node.name);
+      }
+      if (node.isMesh && hasVertexGroups(node.geometry)) {
+        Object.assign(vgColors, getVertexGroups(node.geometry));
       }
     });
 
@@ -678,6 +751,25 @@ export class Viewer {
           this.morphCtrls.push(ctrl);
         }
       });
+    }
+
+    const vgColorNames = Object.keys(vgColors);
+    if (vgColorNames.length) {
+      this.vgColorsFolder.domElement.style.display = '';
+      for (let i = 0; i < vgColorNames.length; i++) {
+        const name = vgColorNames[i];
+        const nameCtrl = this.vgColorsFolder.add({ name }, 'name');
+        this.vgColorsCtrls.push(nameCtrl);
+        this.vgColorsHues[i] = 0;
+        const ctrl = this.vgColorsFolder.add(this.vgColorsHues, i, 0, 1, 0.01).listen().onChange(value => {
+          this.content.traverse(node => {
+            if (node.isMesh) {
+              colorShift(node.geometry, name, value, 0, 0);
+            }
+          })
+        });
+        this.vgColorsCtrls.push(ctrl);
+      }
     }
 
     if (this.clips.length) {
