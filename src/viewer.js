@@ -73,12 +73,13 @@ function hasVertexGroups(geom) {
   return Object.keys(geom.attributes).some(attrName => attrName.indexOf('_') === 0)
 }
 
-function colorShift(geom, vertexGroupName, hue, saturation = 0, light = 0) {
+function colorShift(geom, vertexGroupName, destColor, lerpAlpha) {
   if (!(vertexGroupName in geom.attributes)) {
     console.log('no vertex group named', vertexGroupName, geom);
     return;
   }
 
+  const dColor = new THREE.Color(destColor);
   const color = geom.getAttribute("color");
   const mask = geom.getAttribute(vertexGroupName);
   
@@ -100,7 +101,7 @@ function colorShift(geom, vertexGroupName, hue, saturation = 0, light = 0) {
       c.r = original.getX(i) / 65535;
       c.g = original.getY(i) / 65535;
       c.b = original.getZ(i) / 65535;
-      c.offsetHSL(hue, saturation, light);
+      c.lerpColors(c, dColor, lerpAlpha);
       color.setXYZ(
         i,
         Math.floor(c.r * 65535),
@@ -759,10 +760,21 @@ export class Viewer {
       for (let i = 0; i < vgColorNames.length; i++) {
         const name = vgColorNames[i];
         this.vgColorsHues[name] = 0;
-        const ctrl = this.vgColorsFolder.add(this.vgColorsHues, name, 0, 1, 0.01).listen().onChange(value => {
+        this.vgColorsHues[name + '-color'] = '#ffffff';
+        const colorCtrl = this.vgColorsFolder.addColor(this.vgColorsHues, name + '-color').listen().onChange(color => {
           this.content.traverse(node => {
             if (node.isMesh) {
-              colorShift(node.geometry, name, value, 0, 0);
+              const lerpAlpha = this.vgColorsHues[name];
+              colorShift(node.geometry, name, color, lerpAlpha);
+            }
+          })
+        });
+        this.vgColorsCtrls.push(colorCtrl);
+        const ctrl = this.vgColorsFolder.add(this.vgColorsHues, name, 0, 1, 0.01).listen().onChange(lerpAlpha => {
+          this.content.traverse(node => {
+            if (node.isMesh) {
+              const color = this.vgColorsHues[name + '-color'];
+              colorShift(node.geometry, name, color, lerpAlpha);
             }
           })
         });
