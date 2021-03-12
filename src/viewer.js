@@ -197,7 +197,7 @@ export class Viewer {
     this.morphCtrls = [];
     this.vgColorsFolder = null;
     this.vgColorsCtrls = [];
-    this.vgColorsHues = [];
+    this.vgColorsHues = {};
     this.skeletonHelpers = [];
     this.gridHelper = null;
     this.axesHelper = null;
@@ -758,10 +758,8 @@ export class Viewer {
       this.vgColorsFolder.domElement.style.display = '';
       for (let i = 0; i < vgColorNames.length; i++) {
         const name = vgColorNames[i];
-        const nameCtrl = this.vgColorsFolder.add({ name }, 'name');
-        this.vgColorsCtrls.push(nameCtrl);
-        this.vgColorsHues[i] = 0;
-        const ctrl = this.vgColorsFolder.add(this.vgColorsHues, i, 0, 1, 0.01).listen().onChange(value => {
+        this.vgColorsHues[name] = 0;
+        const ctrl = this.vgColorsFolder.add(this.vgColorsHues, name, 0, 1, 0.01).listen().onChange(value => {
           this.content.traverse(node => {
             if (node.isMesh) {
               colorShift(node.geometry, name, value, 0, 0);
