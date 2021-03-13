@@ -61,11 +61,11 @@ const Preset = {ASSET_GENERATOR: 'assetgenerator'};
 Cache.enabled = true;
 
 function hasVertexGroups(geom) {
-  return Object.keys(geom.attributes).some(attrName => attrName.indexOf('_') === 0)
+  return Object.keys(geom.attributes).some(attrName => attrName.indexOf('_vg_') === 0)
 }
 
 function getVertexGroups(geom) {
-  const names = Object.keys(geom.attributes).filter(attrName => attrName.indexOf('_') === 0);
+  const names = Object.keys(geom.attributes).filter(attrName => attrName.indexOf('_vg_') === 0);
   const groups = {};
   for (const name of names) {
     groups[name] = geom.getAttribute(name);
@@ -165,7 +165,7 @@ function changeFacemapColor(node, facemapIndex, destColor, lerpAlpha) {
   const color = getOrCreateColorAttribute(node);
   const original = getOrCreateOriginalColorAttribute(node);
 
-  const facemaps = geom.getAttribute('facemaps');
+  const facemaps = geom.getAttribute('_facemaps');
   for (let i = 0, len = facemaps.count; i < len; i++) {
     if (facemaps.array[i] === facemapIndex) {
       lerpOriginalToColor(i, original, color, dColor, lerpAlpha);
