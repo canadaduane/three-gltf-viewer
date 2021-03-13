@@ -60,6 +60,10 @@ const Preset = {ASSET_GENERATOR: 'assetgenerator'};
 
 Cache.enabled = true;
 
+function hasVertexGroups(geom) {
+  return Object.keys(geom.attributes).some(attrName => attrName.indexOf('_') === 0)
+}
+
 function getVertexGroups(geom) {
   const names = Object.keys(geom.attributes).filter(attrName => attrName.indexOf('_') === 0);
   const groups = {};
@@ -69,11 +73,62 @@ function getVertexGroups(geom) {
   return groups;
 }
 
-function hasVertexGroups(geom) {
-  return Object.keys(geom.attributes).some(attrName => attrName.indexOf('_') === 0)
+function hasFacemaps(node) {
+  return 'face_maps' in node.userData;
 }
 
-function colorShift(geom, vertexGroupName, destColor, lerpAlpha) {
+function getFacemapNames(node) {
+  return node.userData['face_maps'];
+}
+
+function getOrCreateColorAttribute(node) {
+  const geom = node.geometry;
+  if (!("color" in geom.attributes)) {
+    const position = geom.getAttribute('position')
+    const array = new Uint16Array(position.count * 4);
+    const color = new THREE.BufferAttribute(array, 4, true);
+    const materialColor = node.material.color.convertLinearToSRGB();
+    for (let i = 0; i < position.count; i++) {
+      color.setXYZ(i,
+        Math.floor(materialColor.r * 65535),
+        Math.floor(materialColor.g * 65535),
+        Math.floor(materialColor.b * 65535)
+      );
+    }
+    geom.setAttribute('color', color);
+    node.material.vertexColors = true;
+    node.material.needsUpdate = true;
+  }
+  return geom.getAttribute("color");
+}
+
+function getOrCreateOriginalColorAttribute(node) {
+  const geom = node.geometry;
+  if (!("originalcolor" in geom.attributes)) {
+    const color = getOrCreateColorAttribute(node);
+    const copy = new THREE.BufferAttribute().copy(color);
+    geom.setAttribute("originalcolor", copy);
+  }
+  return geom.getAttribute("originalcolor");
+}
+
+const sColor = new THREE.Color();
+function lerpOriginalToColor(i, original, color, dColor, lerpAlpha) {
+  sColor.r = original.getX(i) / 65535;
+  sColor.g = original.getY(i) / 65535;
+  sColor.b = original.getZ(i) / 65535;
+
+  sColor.lerpColors(sColor, dColor, lerpAlpha);
+
+  color.setXYZ(i,
+    Math.floor(sColor.r * 65535),
+    Math.floor(sColor.g * 65535),
+    Math.floor(sColor.b * 65535)
+  );
+}
+
+function changeVertexGroupColor(node, vertexGroupName, destColor, lerpAlpha) {
+  const geom = node.geometry;
   if (!(vertexGroupName in geom.attributes)) {
     console.log('no vertex group named', vertexGroupName, geom);
     return;
@@ -83,31 +138,37 @@ function colorShift(geom, vertexGroupName, destColor, lerpAlpha) {
   const color = geom.getAttribute("color");
   const mask = geom.getAttribute(vertexGroupName);
   
-  let original;
-  if ("originalcolor" in geom.attributes) {
-    original = geom.getAttribute("originalcolor");
-  } else {
-    original = new THREE.BufferAttribute().copy(color);
-    geom.setAttribute("originalcolor", original);
-  }
+  const original = getOrCreateOriginalColorAttribute(node);
 
-  const c = new THREE.Color();
   if (mask.count !== original.count) {
     throw new Error("mask must be same size");
   }
 
   for (let i = 0, len = original.count; i < len; i++) {
     if (mask.array[i]) {
-      c.r = original.getX(i) / 65535;
-      c.g = original.getY(i) / 65535;
-      c.b = original.getZ(i) / 65535;
-      c.lerpColors(c, dColor, lerpAlpha);
-      color.setXYZ(
-        i,
-        Math.floor(c.r * 65535),
-        Math.floor(c.g * 65535),
-        Math.floor(c.b * 65535)
-      );
+      lerpOriginalToColor(i, original, color, dColor, lerpAlpha);
+    }
+  }
+
+  color.needsUpdate = true;
+}
+
+function changeFacemapColor(node, facemapIndex, destColor, lerpAlpha) {
+  if (facemapIndex >= getFacemapNames(node).length) {
+    console.log('no facemap index', facemapIndex, node);
+    return;
+  }
+
+  const geom = node.geometry;
+  const dColor = new THREE.Color(destColor);
+
+  const color = getOrCreateColorAttribute(node);
+  const original = getOrCreateOriginalColorAttribute(node);
+
+  const facemaps = geom.getAttribute('facemaps');
+  for (let i = 0, len = facemaps.count; i < len; i++) {
+    if (facemaps.array[i] === facemapIndex) {
+      lerpOriginalToColor(i, original, color, dColor, lerpAlpha);
     }
   }
 
@@ -198,7 +259,10 @@ export class Viewer {
     this.morphCtrls = [];
     this.vgColorsFolder = null;
     this.vgColorsCtrls = [];
-    this.vgColorsHues = {};
+    this.vgColors = {};
+    this.fmColorsFolder = null;
+    this.fmColorsCtrls = [];
+    this.fmColors = {};
     this.skeletonHelpers = [];
     this.gridHelper = null;
     this.axesHelper = null;
@@ -677,6 +741,9 @@ export class Viewer {
 
     this.vgColorsFolder = gui.addFolder('Vertex Group Colors');
     this.vgColorsFolder.domElement.style.display = 'none';
+    
+    this.fmColorsFolder = gui.addFolder('Face Map Colors');
+    this.fmColorsFolder.domElement.style.display = 'none';
 
     // Camera controls.
     this.cameraFolder = gui.addFolder('Cameras');
@@ -713,9 +780,14 @@ export class Viewer {
     this.vgColorsCtrls.length = 0;
     this.vgColorsFolder.domElement.style.display = 'none';
 
+    this.fmColorsCtrls.forEach((ctrl) => ctrl.remove());
+    this.fmColorsCtrls.length = 0;
+    this.fmColorsFolder.domElement.style.display = 'none';
+
     const cameraNames = [];
     const morphMeshes = [];
     const vgColors = {};
+    const fmColors = {};
     this.content.traverse((node) => {
       if (node.isMesh && node.morphTargetInfluences) {
         morphMeshes.push(node);
@@ -726,6 +798,11 @@ export class Viewer {
       }
       if (node.isMesh && hasVertexGroups(node.geometry)) {
         Object.assign(vgColors, getVertexGroups(node.geometry));
+      }
+      if (node.isMesh && hasFacemaps(node)) {
+        getFacemapNames(node).forEach((name, i) => {
+          fmColors[name] = i;
+        })
       }
     });
 
@@ -757,30 +834,53 @@ export class Viewer {
     const vgColorNames = Object.keys(vgColors);
     if (vgColorNames.length) {
       this.vgColorsFolder.domElement.style.display = '';
+
+      const updateColor = (vertexGroupName, destColor, lerpAlpha) => {
+        this.content.traverse(node => {
+          if (node.isMesh) {
+            changeVertexGroupColor(node, vertexGroupName, destColor, lerpAlpha);
+          }
+        })
+      }
+
       for (let i = 0; i < vgColorNames.length; i++) {
         const name = vgColorNames[i];
-        this.vgColorsHues[name] = 0;
-        this.vgColorsHues[name + '-color'] = '#ffffff';
-        const colorCtrl = this.vgColorsFolder.addColor(this.vgColorsHues, name + '-color').listen().onChange(color => {
-          this.content.traverse(node => {
-            if (node.isMesh) {
-              const lerpAlpha = this.vgColorsHues[name];
-              colorShift(node.geometry, name, color, lerpAlpha);
-            }
-          })
-        });
+        this.vgColors[name] = 0;
+        this.vgColors[name + '-color'] = '#ffffff';
+        const colorCtrl = this.vgColorsFolder.addColor(this.vgColors, name + '-color').listen()
+          .onChange(color => updateColor(name, color, this.vgColors[name]));
         this.vgColorsCtrls.push(colorCtrl);
-        const ctrl = this.vgColorsFolder.add(this.vgColorsHues, name, 0, 1, 0.01).listen().onChange(lerpAlpha => {
-          this.content.traverse(node => {
-            if (node.isMesh) {
-              const color = this.vgColorsHues[name + '-color'];
-              colorShift(node.geometry, name, color, lerpAlpha);
-            }
-          })
-        });
+        const ctrl = this.vgColorsFolder.add(this.vgColors, name, 0, 1, 0.01).listen()
+          .onChange(lerpAlpha => updateColor(name, this.vgColors[name + '-color'], lerpAlpha))
         this.vgColorsCtrls.push(ctrl);
       }
     }
+
+    const fmColorNames = Object.keys(fmColors);
+    if (fmColorNames.length) {
+      this.fmColorsFolder.domElement.style.display = '';
+
+      const updateColor = (facemapIndex, destColor, lerpAlpha) => {
+        this.content.traverse(node => {
+          if (node.isMesh) {
+            changeFacemapColor(node, facemapIndex, destColor, lerpAlpha);
+          }
+        })
+      }
+
+      for (let i = 0; i < fmColorNames.length; i++) {
+        const name = fmColorNames[i];
+        this.fmColors[name] = 0;
+        this.fmColors[name + '-color'] = '#ffffff';
+        const colorCtrl = this.fmColorsFolder.addColor(this.fmColors, name + '-color').listen()
+          .onChange(color => updateColor(i, color, this.fmColors[name]));
+        this.fmColorsCtrls.push(colorCtrl);
+        const ctrl = this.fmColorsFolder.add(this.fmColors, name, 0, 1, 0.01).listen()
+          .onChange(lerpAlpha => updateColor(i, this.fmColors[name + '-color'], lerpAlpha))
+        this.fmColorsCtrls.push(ctrl);
+      }
+    }
+    
 
     if (this.clips.length) {
       this.animFolder.domElement.style.display = '';
