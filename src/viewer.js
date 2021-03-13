@@ -74,11 +74,11 @@ function getVertexGroups(geom) {
 }
 
 function hasFacemaps(node) {
-  return 'face_maps' in node.userData;
+  return 'facemaps' in node.userData;
 }
 
 function getFacemapNames(node) {
-  return node.userData['face_maps'];
+  return node.userData['facemaps'];
 }
 
 function getOrCreateColorAttribute(node) {
