@@ -492,7 +492,7 @@ export class Viewer {
   playAllClips () {
     this.clips.forEach((clip) => {
       this.mixer.clipAction(clip).reset().play();
-      this.state.actionStates[clip.name] = true;
+      this.state.actionStates[clip.name] = 1.0;
     });
   }
 
@@ -885,23 +885,22 @@ export class Viewer {
     if (this.clips.length) {
       this.animFolder.domElement.style.display = '';
       const actionStates = this.state.actionStates = {};
-      this.clips.forEach((clip, clipIndex) => {
-        // Autoplay the first clip.
-        let action;
-        if (clipIndex === 0) {
-          actionStates[clip.name] = true;
-          action = this.mixer.clipAction(clip);
-          action.play();
-        } else {
-          actionStates[clip.name] = false;
-        }
+      this.clips.forEach((clip) => {
+        let action
+        actionStates[clip.name] = 0.0;
 
         // Play other clips when enabled.
-        const ctrl = this.animFolder.add(actionStates, clip.name).listen();
-        ctrl.onChange((playAnimation) => {
+        const ctrl = this.animFolder.add(actionStates, clip.name, 0, 1, 0.01).listen();
+        ctrl.onChange((weight) => {
           action = action || this.mixer.clipAction(clip);
           action.setEffectiveTimeScale(1);
-          playAnimation ? action.play() : action.stop();
+          if (weight === 0) {
+            action.stop();
+          } else {
+            action.weight = weight;
+            action.play()
+          }
+          // playAnimation ? action.play() : action.stop();
         });
         this.animCtrls.push(ctrl);
       });
