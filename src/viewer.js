@@ -73,12 +73,16 @@ function getVertexGroups(geom) {
   return groups;
 }
 
-function hasFacemaps(node) {
-  return 'facemaps' in node.userData;
-}
-
+// The `facemaps` data can be in the Mesh node itself, or in a containing
+// Group node, so search up the ancestor tree to see if we can find it.
 function getFacemapNames(node) {
-  return node.userData['facemaps'];
+  if ('facemaps' in node.userData) {
+    return node.userData['facemaps'];
+  } else if (node.parent) {
+    return getFacemapNames(node.parent)
+  } else {
+    return null;
+  }
 }
 
 function getOrCreateColorAttribute(node) {
@@ -799,10 +803,14 @@ export class Viewer {
       if (node.isMesh && hasVertexGroups(node.geometry)) {
         Object.assign(vgColors, getVertexGroups(node.geometry));
       }
-      if (node.isMesh && hasFacemaps(node)) {
-        getFacemapNames(node).forEach((name, i) => {
-          fmColors[name] = i;
-        })
+
+      if (node.isMesh) {
+        const facemaps = getFacemapNames(node);
+        if (facemaps) {
+          facemaps.forEach((name, i) => {
+            fmColors[name] = i;
+          });
+        }
       }
     });
 
